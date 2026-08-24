@@ -44,9 +44,9 @@ matmul <M> <N> <L> <version>
 ```
 
 - `M`、`N`、`L`：矩阵维度，计算 C(M×N) = A(M×L) × B(L×N)
-- `version`：matmul 实现版本号，对应 `src/matmul.cpp` 中 `matmulFuncs` 数组的下标
+- `version`：matmul 实现版本号，对应 `src/matmul.cu` 中 `matmul_funcs` 数组的下标
 
-程序输出 cuBLAS 参考实现与指定版本的 GFLOPS 对比，并用 cuBLAS 的结果校验正确性，校验失败时退出码非零。注意当前唯一的版本 `0`（`matmul_00`）是空实现占位，校验失败属预期行为。
+程序输出 cuBLAS 参考实现与指定版本的 GFLOPS 对比，并用 cuBLAS 的结果校验正确性，校验失败时退出码非零。
 
 ### Windows
 

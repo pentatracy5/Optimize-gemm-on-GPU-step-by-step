@@ -2,10 +2,12 @@
 #include <utils.h>
 #include <macro.h>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <random>
 #include <curand_kernel.h>
 
 using std::cerr;
@@ -91,14 +93,15 @@ __global__ void setup_states(
 __global__ void rand_init_kernel(
 	curandStatePhilox4_32_10_t *states,
 	float *output,
-	const unsigned int size)
+	const unsigned int rows,
+	const unsigned int cols,
+	const unsigned int ld)
 {
-	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	if (idx >= size)
+	const unsigned int row_id = blockIdx.y * blockDim.y + threadIdx.y;
+	const unsigned int col_id = blockIdx.x * blockDim.x + threadIdx.x;
+	if (row_id >= rows || col_id >= ld)
 		return;
-	curandStatePhilox4_32_10_t state = states[idx];
-	output[idx] = curand_uniform(&state);
-	states[idx] = state;
+	output[row_id * ld + col_id] = col_id >= cols ? 0.0f : curand_uniform(states + row_id * cols + col_id);
 }
 
 void init_ABCREF(
@@ -113,30 +116,55 @@ void init_ABCREF(
 	float *d_C,
 	float *d_REF)
 {
-	constexpr unsigned long long SEED = 1234ULL;
-
-	const size_t size_A = static_cast<size_t>(M) * lda;
-	const size_t size_B = static_cast<size_t>(L) * ldb;
+	// Generate the seed randomly once per program launch (hardware entropy
+	// combined with the current time) so each run uses different matrices.
+	auto device = static_cast<unsigned long long>(std::random_device{}()) << 32;
+	auto time = static_cast<unsigned long long>(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+	const unsigned long long SEED = device ^ time;
 
 	curandStatePhilox4_32_10_t *d_states;
-	const size_t state_size = std::max(size_A, size_B);
+	const size_t state_size = std::max(static_cast<size_t>(M) * L, static_cast<size_t>(L) * N);
 	CUDA_CHECK(cudaMalloc(&d_states, sizeof(curandStatePhilox4_32_10_t) * state_size));
-	dim3 threads_per_block{512};
+
+	// setup states
+	dim3 total_threads_1d{static_cast<unsigned int>(state_size)};
+	dim3 threads_per_block_1d{512};
+	CUDA_LAUNCH(setup_states, total_threads_1d, threads_per_block_1d)(d_states,
+																	  static_cast<unsigned int>(state_size),
+																	  SEED);
+	CUDA_KERNEL_LAUNCH_CHECK();
 
 	// random init d_A
-	dim3 total_threads_A{static_cast<unsigned int>(size_A)};
-	CUDA_LAUNCH(setup_states, total_threads_A, threads_per_block)(d_states, static_cast<unsigned int>(size_A), SEED);
+	dim3 total_threads_A{static_cast<unsigned int>(lda), static_cast<unsigned int>(M)};
+	dim3 threads_per_block{16, 16};
+	CUDA_LAUNCH(rand_init_kernel, total_threads_A, threads_per_block)(
+		d_states,
+		d_A,
+		static_cast<unsigned int>(M),
+		static_cast<unsigned int>(L),
+		static_cast<unsigned int>(lda));
 	CUDA_KERNEL_LAUNCH_CHECK();
-	CUDA_LAUNCH(rand_init_kernel, total_threads_A, threads_per_block)(d_states, d_A, static_cast<unsigned int>(size_A));
+
+	// setup states again, reseeded so that B is independent of A
+	CUDA_LAUNCH(setup_states, total_threads_1d, threads_per_block_1d)(
+		d_states,
+		static_cast<unsigned int>(state_size),
+		SEED + 1);
 	CUDA_KERNEL_LAUNCH_CHECK();
-	// random init d_B, reseeded so that B is independent of A
-	dim3 total_threads_B{static_cast<unsigned int>(size_B)};
-	CUDA_LAUNCH(setup_states, total_threads_B, threads_per_block)(d_states, static_cast<unsigned int>(size_B), SEED + 1);
+
+	// random init d_B
+	dim3 total_threads_B{static_cast<unsigned int>(ldb), static_cast<unsigned int>(L)};
+	CUDA_LAUNCH(rand_init_kernel, total_threads_B, threads_per_block)(
+		d_states,
+		d_B,
+		static_cast<unsigned int>(L),
+		static_cast<unsigned int>(N),
+		static_cast<unsigned int>(ldb));
 	CUDA_KERNEL_LAUNCH_CHECK();
-	CUDA_LAUNCH(rand_init_kernel, total_threads_B, threads_per_block)(d_states, d_B, static_cast<unsigned int>(size_B));
-	CUDA_KERNEL_LAUNCH_CHECK();
+
 	// zero init d_C
 	CUDA_CHECK(cudaMemset(d_C, 0, sizeof(float) * M * ldc));
+
 	// zero init d_REF
 	CUDA_CHECK(cudaMemset(d_REF, 0, sizeof(float) * M * ldc));
 

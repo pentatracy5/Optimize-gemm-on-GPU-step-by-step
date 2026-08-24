@@ -10,12 +10,48 @@ struct alignas(BYTE_SIZE) Vec
     __host__ __device__ inline const T &operator[](unsigned int i) const { return x[i]; }
     __host__ __device__ inline T &operator[](unsigned int i) { return x[i]; }
 
+    __host__ __device__ inline Vec operator+(const T &other) const
+    {
+        Vec out;
+#pragma unroll
+        for (unsigned int i = 0; i < vec_len; i++)
+            out[i] = x[i] + other;
+        return out;
+    }
+
+    friend __host__ __device__ inline Vec operator+(const T &lhs, const Vec &rhs)
+    {
+        Vec out;
+#pragma unroll
+        for (unsigned int i = 0; i < vec_len; i++)
+            out[i] = lhs + rhs[i];
+        return out;
+    }
+
     __host__ __device__ inline Vec operator+(const Vec &other) const
     {
         Vec out;
 #pragma unroll
         for (unsigned int i = 0; i < vec_len; i++)
             out[i] = x[i] + other[i];
+        return out;
+    }
+
+    __host__ __device__ inline Vec operator*(const T &other) const
+    {
+        Vec out;
+#pragma unroll
+        for (unsigned int i = 0; i < vec_len; i++)
+            out[i] = x[i] * other;
+        return out;
+    }
+
+    friend __host__ __device__ inline Vec operator*(const T &lhs, const Vec &rhs)
+    {
+        Vec out;
+#pragma unroll
+        for (unsigned int i = 0; i < vec_len; i++)
+            out[i] = lhs * rhs[i];
         return out;
     }
 
@@ -28,11 +64,27 @@ struct alignas(BYTE_SIZE) Vec
         return out;
     }
 
+    __host__ __device__ inline Vec &operator+=(const T &other)
+    {
+#pragma unroll
+        for (unsigned int i = 0; i < vec_len; i++)
+            x[i] += other;
+        return *this;
+    }
+
     __host__ __device__ inline Vec &operator+=(const Vec &other)
     {
 #pragma unroll
         for (unsigned int i = 0; i < vec_len; i++)
             x[i] += other[i];
+        return *this;
+    }
+
+    __host__ __device__ inline Vec &operator*=(const T &other)
+    {
+#pragma unroll
+        for (unsigned int i = 0; i < vec_len; i++)
+            x[i] *= other;
         return *this;
     }
 
