@@ -55,7 +55,7 @@ bool test(int M, int N, int L, unsigned int version)
 
 	double flops = 2 * M / 1000.0 * N / 1000.0 * L / 1000.0;
 	cout << "M\tN\tL\tref_GFLOPS\tf_GFLOPS" << endl;
-	cout << M << '\t' << N << '\t' << L << '\t' << flops / time_ref << '\t' << flops / time_f << endl;
+	cout << M << '\t' << N << '\t' << L << '\t' << flops / time_ref << '\t' << '\t' << flops / time_f << endl;
 
 	const bool pass = check_result(M, N, ldc, d_C, d_REF, tolerance);
 
