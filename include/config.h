@@ -10,8 +10,8 @@ constexpr float ALPHA = 1.0f;
 constexpr float BETA = 0.0f;
 
 constexpr int VEC_SIZE = 4;
-constexpr int RM = 1 * VEC_SIZE;
-constexpr int RN = 1 * VEC_SIZE;
+constexpr int RM = 2 * VEC_SIZE;
+constexpr int RN = 2 * VEC_SIZE;
 constexpr int BL = 2 * VEC_SIZE;
 constexpr int BM = 16 * RM;
 constexpr int BN = 16 * RN;

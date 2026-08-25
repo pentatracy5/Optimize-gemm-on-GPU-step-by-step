@@ -87,6 +87,7 @@ __global__ void matmul_01_kernel(
         }
         __syncthreads();
         // compute C
+#pragma unroll BL
         for (int thread_L_id_start = 0; thread_L_id_start < BL; thread_L_id_start++)
         {
             // load A from A panel to A register
