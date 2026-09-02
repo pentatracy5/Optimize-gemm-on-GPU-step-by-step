@@ -21,12 +21,6 @@ __global__ void matmul_00_kernel(
     float *d_B,
     float *d_C)
 {
-    __shared__ float A_panel[BL][BM];
-    __shared__ float B_panel[BL][BN];
-    float A_reg[RM]{0.0f};
-    float B_reg[RN]{0.0f};
-    float C_reg[RM][RN]{0.0f};
-
     int block_row_id_start = blockIdx.y * BM;
     int block_col_id_start = blockIdx.x * BN;
     int thread_row_id_start = threadIdx.y * RM;
@@ -49,19 +43,25 @@ __global__ void matmul_00_kernel(
     float *current_thread_B_base;
     float *current_thread_C_base = current_block_C_base + thread_row_id_start * ldc + thread_col_id_start;
 
+    __shared__ float A_panel[BL][BM];
+    __shared__ float B_panel[BL][BN];
+    float A_reg[RM]{0.0f};
+    float B_reg[RN]{0.0f};
+    float C_reg[RM][RN]{0.0f};
+
     int row_id;
     int col_id;
     for (int block_L_id_start = 0; block_L_id_start < L; block_L_id_start += BL)
     {
         // parallel load A from global memory to A panel
-        current_block_A_base = d_A + block_row_id_start * lda + block_L_id_start;
+        current_block_A_base = d_A + block_L_id_start * lda + block_row_id_start;
         current_block_A_L = min(BL, L - block_L_id_start);
         for (int t = tid; t < BM * BL; t += threads_per_block)
         {
-            row_id = t / BL;
-            col_id = t - row_id * BL;
+            col_id = t / BM;
+            row_id = t - col_id * BM;
             A_panel[col_id][row_id] = (row_id < current_block_A_M && col_id < current_block_A_L)
-                                          ? current_block_A_base[row_id * lda + col_id]
+                                          ? current_block_A_base[col_id * lda + row_id]
                                           : 0.0f;
         }
         // parallel load B from global memory to B panel
@@ -124,9 +124,9 @@ void matmul_00(
     float *d_B,
     float *d_C)
 {
+    auto kernel = matmul_00_kernel<BM, BN, BL, RM, RN>;
     const dim3 total_threads{static_cast<unsigned int>((N + RN - 1) / RN), static_cast<unsigned int>((M + RM - 1) / RM)};
     const dim3 threads_per_block{static_cast<unsigned int>(BN / RN), static_cast<unsigned int>(BM / RM)};
-    auto kernel = matmul_00_kernel<BM, BN, BL, RM, RN>;
     CUDA_LAUNCH(kernel, total_threads, threads_per_block)(
         M,
         N,

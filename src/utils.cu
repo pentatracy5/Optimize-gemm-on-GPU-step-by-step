@@ -54,10 +54,10 @@ void malloc_matrix(
 	float *&d_REF)
 {
 	// padding for vectorize load and store
-	lda = (L + VEC_SIZE - 1) / VEC_SIZE * VEC_SIZE;
+	lda = (M + VEC_SIZE - 1) / VEC_SIZE * VEC_SIZE;
 	ldb = (N + VEC_SIZE - 1) / VEC_SIZE * VEC_SIZE;
 	ldc = (N + VEC_SIZE - 1) / VEC_SIZE * VEC_SIZE;
-	CUDA_CHECK(cudaMalloc(&d_A, sizeof(float) * M * lda));
+	CUDA_CHECK(cudaMalloc(&d_A, sizeof(float) * L * lda));
 	CUDA_CHECK(cudaMalloc(&d_B, sizeof(float) * L * ldb));
 	CUDA_CHECK(cudaMalloc(&d_C, sizeof(float) * M * ldc));
 	CUDA_CHECK(cudaMalloc(&d_REF, sizeof(float) * M * ldc));
@@ -135,13 +135,13 @@ void init_ABCREF(
 	CUDA_KERNEL_LAUNCH_CHECK();
 
 	// random init d_A
-	dim3 total_threads_A{static_cast<unsigned int>(lda), static_cast<unsigned int>(M)};
+	dim3 total_threads_A{static_cast<unsigned int>(lda), static_cast<unsigned int>(L)};
 	dim3 threads_per_block{16, 16};
 	CUDA_LAUNCH(rand_init_kernel, total_threads_A, threads_per_block)(
 		d_states,
 		d_A,
-		static_cast<unsigned int>(M),
 		static_cast<unsigned int>(L),
+		static_cast<unsigned int>(M),
 		static_cast<unsigned int>(lda));
 	CUDA_KERNEL_LAUNCH_CHECK();
 
@@ -182,9 +182,9 @@ void print_ABC(
 	const float *d_B,
 	const float *d_C)
 {
-	float *h_A = (float *)malloc(sizeof(float) * M * lda);
+	float *h_A = (float *)malloc(sizeof(float) * L * lda);
 	MALLOC_CHECK(h_A);
-	CUDA_CHECK(cudaMemcpy(h_A, d_A, sizeof(float) * M * lda, cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(h_A, d_A, sizeof(float) * L * lda, cudaMemcpyDeviceToHost));
 	float *h_B = (float *)malloc(sizeof(float) * L * ldb);
 	MALLOC_CHECK(h_B);
 	CUDA_CHECK(cudaMemcpy(h_B, d_B, sizeof(float) * L * ldb, cudaMemcpyDeviceToHost));
@@ -196,7 +196,7 @@ void print_ABC(
 	for (int i = 0; i < M; i++)
 	{
 		for (int k = 0; k < L; k++)
-			cout << h_A[i * lda + k] << " ";
+			cout << h_A[k * lda + i] << " ";
 		cout << endl;
 	}
 

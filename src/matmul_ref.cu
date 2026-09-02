@@ -24,7 +24,7 @@ void matmul_ref(
     CUBLAS_CHECK(cublasSgemm(
         handle,
         CUBLAS_OP_N,
-        CUBLAS_OP_N,
+        CUBLAS_OP_T,
         N,
         M,
         L,
