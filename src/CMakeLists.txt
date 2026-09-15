@@ -7,6 +7,8 @@ add_library(matmul_lib STATIC
     matmul_01.cu
     matmul_02.cu
     matmul_03.cu
+    matmul_04.cu
+    matmul_05.cu
     utils.cu
 )
 
@@ -33,7 +35,11 @@ if(MSVC)
         $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
         $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>
         $<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>>:/O2 /arch:AVX2>
-        $<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CUDA>>:-O3>
+        # -lineinfo emits line-number tables so Nsight Compute can correlate
+        # CUDA C++ source <-> PTX <-> SASS with metrics. Unlike -G it keeps
+        # optimizations on, so the profiled performance stays representative.
+        $<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CUDA>>:-O3 -lineinfo>
+        $<$<AND:$<CONFIG:Debug>,$<COMPILE_LANGUAGE:CUDA>>:-lineinfo>
     )
     target_compile_options(matmul PRIVATE
         /utf-8
@@ -42,7 +48,8 @@ if(MSVC)
 else()
     target_compile_options(matmul_lib PRIVATE
         $<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>>:-O3 -march=native>
-        $<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CUDA>>:-O3>
+        $<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CUDA>>:-O3 -lineinfo>
+        $<$<AND:$<CONFIG:Debug>,$<COMPILE_LANGUAGE:CUDA>>:-lineinfo>
     )
     target_compile_options(matmul PRIVATE $<$<CONFIG:Release>:-O3 -march=native>)
 endif()

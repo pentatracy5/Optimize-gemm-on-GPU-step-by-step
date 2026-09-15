@@ -9,8 +9,7 @@ template <
     int BL,
     int RM,
     int RN,
-    int VEC_SIZE,
-    int THREADS_PER_BLOCK>
+    int VEC_SIZE>
 __global__ void matmul_03_kernel(
     const int M,
     const int N,
@@ -27,13 +26,18 @@ __global__ void matmul_03_kernel(
     using FVEC = VecN<float, VEC_SIZE>;
     constexpr FVEC ZERO_VEC = {};
 
+    constexpr int THREADS_PER_BLOCK_X = BN / RN;
+    constexpr int THREADS_PER_BLOCK_Y = BM / RM;
+    constexpr int THREADS_PER_BLOCK = THREADS_PER_BLOCK_X * THREADS_PER_BLOCK_Y;
+    constexpr int NUM_A_PANEL_REG = (BM * BL + THREADS_PER_BLOCK * VEC_SIZE - 1) / (THREADS_PER_BLOCK * VEC_SIZE);
+    constexpr int NUM_B_PANEL_REG = (BL * BN + THREADS_PER_BLOCK * VEC_SIZE - 1) / (THREADS_PER_BLOCK * VEC_SIZE);
+
     int block_row_id_start = blockIdx.y * BM;
     int block_col_id_start = blockIdx.x * BN;
     int thread_row_id_start = threadIdx.y * RM;
     int thread_col_id_start = threadIdx.x * RN;
 
     int tid = threadIdx.y * blockDim.x + threadIdx.x;
-    int threads_per_block = blockDim.y * blockDim.x;
 
     int current_block_A_M = min(BM, M - block_row_id_start);
     int current_block_A_L;
@@ -54,10 +58,8 @@ __global__ void matmul_03_kernel(
     alignas(sizeof(FVEC)) float A_reg[2][RM]{0.0f};
     alignas(sizeof(FVEC)) float B_reg[2][RN]{0.0f};
     alignas(sizeof(FVEC)) float C_reg[RM][RN]{0.0f};
-    constexpr int num_A_panel_reg = (BM * BL + THREADS_PER_BLOCK * VEC_SIZE - 1) / (THREADS_PER_BLOCK * VEC_SIZE);
-    constexpr int num_B_panel_reg = (BL * BN + THREADS_PER_BLOCK * VEC_SIZE - 1) / (THREADS_PER_BLOCK * VEC_SIZE);
-    FVEC A_panel_reg[num_A_panel_reg];
-    FVEC B_panel_reg[num_B_panel_reg];
+    FVEC A_panel_reg[NUM_A_PANEL_REG];
+    FVEC B_panel_reg[NUM_B_PANEL_REG];
 
     int row_id;
     int col_id;
@@ -72,7 +74,7 @@ __global__ void matmul_03_kernel(
             // parallel load A from global memory to A panel
             current_block_A_base = d_A + block_L_id_start * lda + block_row_id_start;
             current_block_A_L = min(BL, L - block_L_id_start);
-            for (int t = tid * VEC_SIZE, s = 0; t < BM * BL; t += threads_per_block * VEC_SIZE, s++)
+            for (int t = tid * VEC_SIZE, s = 0; t < BM * BL; t += THREADS_PER_BLOCK * VEC_SIZE, s++)
             {
                 col_id = t / BM;
                 row_id = t - col_id * BM;
@@ -84,7 +86,7 @@ __global__ void matmul_03_kernel(
             // parallel load B from global memory to B panel
             current_block_B_base = d_B + block_L_id_start * ldb + block_col_id_start;
             current_block_B_L = current_block_A_L;
-            for (int t = tid * VEC_SIZE, s = 0; t < BL * BN; t += threads_per_block * VEC_SIZE, s++)
+            for (int t = tid * VEC_SIZE, s = 0; t < BL * BN; t += THREADS_PER_BLOCK * VEC_SIZE, s++)
             {
                 row_id = t / BN;
                 col_id = t - row_id * BN;
@@ -149,7 +151,7 @@ __global__ void matmul_03_kernel(
             // parallel load A from global memory to A panel
             current_block_A_base = d_A + block_L_id_start * lda + block_row_id_start;
             current_block_A_L = min(BL, L - block_L_id_start);
-            for (int t = tid * VEC_SIZE, s = 0; t < BM * BL; t += threads_per_block * VEC_SIZE, s++)
+            for (int t = tid * VEC_SIZE, s = 0; t < BM * BL; t += THREADS_PER_BLOCK * VEC_SIZE, s++)
             {
                 col_id = t / BM;
                 row_id = t - col_id * BM;
@@ -158,7 +160,7 @@ __global__ void matmul_03_kernel(
             // parallel load B from global memory to B panel
             current_block_B_base = d_B + block_L_id_start * ldb + block_col_id_start;
             current_block_B_L = current_block_A_L;
-            for (int t = tid * VEC_SIZE, s = 0; t < BL * BN; t += threads_per_block * VEC_SIZE, s++)
+            for (int t = tid * VEC_SIZE, s = 0; t < BL * BN; t += THREADS_PER_BLOCK * VEC_SIZE, s++)
             {
                 row_id = t / BN;
                 col_id = t - row_id * BN;
@@ -194,7 +196,7 @@ void matmul_03(
     float *d_B,
     float *d_C)
 {
-    auto kernel = matmul_03_kernel<BM, BN, BL, RM, RN, VEC_SIZE, THREADS_PER_BLOCK>;
+    auto kernel = matmul_03_kernel<BM, BN, BL, RM, RN, VEC_SIZE>;
     const dim3 total_threads{static_cast<unsigned int>((N + RN - 1) / RN), static_cast<unsigned int>((M + RM - 1) / RM)};
     const dim3 threads_per_block{static_cast<unsigned int>(BN / RN), static_cast<unsigned int>(BM / RM)};
     CUDA_LAUNCH(kernel, total_threads, threads_per_block)(
