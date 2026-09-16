@@ -9,6 +9,7 @@ add_library(matmul_lib STATIC
     matmul_03.cu
     matmul_04.cu
     matmul_05.cu
+    matmul_06.cu
     utils.cu
 )
 

@@ -19,6 +19,7 @@ DECLARE_MATMUL(matmul_02);
 DECLARE_MATMUL(matmul_03);
 DECLARE_MATMUL(matmul_04);
 DECLARE_MATMUL(matmul_05);
+DECLARE_MATMUL(matmul_06);
 
 using MatMulFunc = void(*)(const int M, const int N, const int L, const int lda, const int ldb, const int ldc, float* d_A, float* d_B, float* d_C);
 
