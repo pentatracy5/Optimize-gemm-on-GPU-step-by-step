@@ -145,7 +145,6 @@ __global__ void matmul_04_kernel(
                         *reinterpret_cast<FVEC *>(B_reg[reg_write_id] + j * VEC_SIZE) =
                             *reinterpret_cast<FVEC *>(current_thread_B_base);
                     }
-                    
                 }
 
                 if (thread_L_id_start > 0)
@@ -187,11 +186,11 @@ __global__ void matmul_04_kernel(
                 col_id = t - row_id * BN;
                 *reinterpret_cast<FVEC *>(&B_panel[panel_write_id][row_id][col_id]) = B_panel_reg[s];
             }
-        }
 
-        panel_write_id ^= 1;
-        panel_read_id ^= 1;
-        __syncthreads();
+            panel_write_id ^= 1;
+            panel_read_id ^= 1;
+            __syncthreads();
+        }
     }
 
     // store C
@@ -203,14 +202,14 @@ __global__ void matmul_04_kernel(
         {
             current_area_C_base = current_block_C_base + area_row_id_start[i] * ldc + area_col_id_start[j];
             current_thread_C_base = current_area_C_base + thread_row_id_start * ldc + thread_col_id_start;
-            for (int idx = 0; idx < thread_C_M[i]; idx++)
+#pragma unroll VEC_SIZE
+            for (int idx = 0; idx < VEC_SIZE; idx++)
             {
-                for (int jdx = 0; jdx < thread_C_N[j]; jdx += VEC_SIZE)
-                {
-                    *reinterpret_cast<FVEC *>(&current_thread_C_base[idx * ldc + jdx]) =
-                        alpha * *reinterpret_cast<FVEC *>(&C_reg[i * VEC_SIZE + idx][j * VEC_SIZE + jdx]) +
-                        beta * *reinterpret_cast<FVEC *>(&current_thread_C_base[idx * ldc + jdx]);
-                }
+                if (idx >= thread_C_M[i] || 0 >= thread_C_N[j])
+                    break;
+                *reinterpret_cast<FVEC *>(&current_thread_C_base[idx * ldc]) =
+                    alpha * *reinterpret_cast<FVEC *>(&C_reg[i * VEC_SIZE + idx][j * VEC_SIZE]) +
+                    beta * *reinterpret_cast<FVEC *>(&current_thread_C_base[idx * ldc]);
             }
         }
     }

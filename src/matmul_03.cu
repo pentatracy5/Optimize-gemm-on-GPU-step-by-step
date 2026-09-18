@@ -31,27 +31,50 @@ __global__ void matmul_03_kernel(
     constexpr int THREADS_PER_BLOCK = THREADS_PER_BLOCK_X * THREADS_PER_BLOCK_Y;
     constexpr int NUM_A_PANEL_REG = (BM * BL + THREADS_PER_BLOCK * VEC_SIZE - 1) / (THREADS_PER_BLOCK * VEC_SIZE);
     constexpr int NUM_B_PANEL_REG = (BL * BN + THREADS_PER_BLOCK * VEC_SIZE - 1) / (THREADS_PER_BLOCK * VEC_SIZE);
+    constexpr int NUM_AREA_X = RN / VEC_SIZE;
+    constexpr int NUM_AREA_Y = RM / VEC_SIZE;
+    constexpr int AREA_X_SIZE = THREADS_PER_BLOCK_X * VEC_SIZE;
+    constexpr int AREA_Y_SIZE = THREADS_PER_BLOCK_Y * VEC_SIZE;
 
     int block_row_id_start = blockIdx.y * BM;
     int block_col_id_start = blockIdx.x * BN;
-    int thread_row_id_start = threadIdx.y * RM;
-    int thread_col_id_start = threadIdx.x * RN;
+
+    int current_block_M = min(BM, M - block_row_id_start);
+    int current_block_N = min(BN, N - block_col_id_start);
+    int current_block_L;
+
+    int area_row_id_start[NUM_AREA_Y];
+    int area_col_id_start[NUM_AREA_X];
+    int thread_row_id_start = threadIdx.y * VEC_SIZE;
+    int thread_col_id_start = threadIdx.x * VEC_SIZE;
+    int thread_C_M[NUM_AREA_Y];
+    int thread_C_N[NUM_AREA_X];
+#pragma unroll NUM_AREA_Y
+    for (int i = 0; i < NUM_AREA_Y; i++)
+    {
+        area_row_id_start[i] = AREA_Y_SIZE * i;
+        int area_M = min(AREA_Y_SIZE, current_block_M - area_row_id_start[i]);
+        thread_C_M[i] = min(VEC_SIZE, area_M - thread_row_id_start);
+    }
+#pragma unroll NUM_AREA_X
+    for (int j = 0; j < NUM_AREA_X; j++)
+    {
+        area_col_id_start[j] = AREA_X_SIZE * j;
+        int area_N = min(AREA_X_SIZE, current_block_N - area_col_id_start[j]);
+        thread_C_N[j] = min(VEC_SIZE, area_N - thread_col_id_start);
+    }
 
     int tid = threadIdx.y * blockDim.x + threadIdx.x;
-
-    int current_block_A_M = min(BM, M - block_row_id_start);
-    int current_block_A_L;
-    int current_block_B_L;
-    int current_block_B_N = min(BN, N - block_col_id_start);
-    int current_thread_C_M = min(RM, current_block_A_M - thread_row_id_start);
-    int current_thread_C_N = min(RN, current_block_B_N - thread_col_id_start);
 
     float *current_block_A_base;
     float *current_block_B_base;
     float *current_block_C_base = d_C + block_row_id_start * ldc + block_col_id_start;
+    float *current_area_A_base;
+    float *current_area_B_base;
+    float *current_area_C_base;
     float *current_thread_A_base;
     float *current_thread_B_base;
-    float *current_thread_C_base = current_block_C_base + thread_row_id_start * ldc + thread_col_id_start;
+    float *current_thread_C_base;
 
     alignas(sizeof(FVEC)) __shared__ float A_panel[2][BL][BM];
     alignas(sizeof(FVEC)) __shared__ float B_panel[2][BL][BN];
@@ -71,27 +94,26 @@ __global__ void matmul_03_kernel(
     {
         if (block_L_id_start < L)
         {
+            current_block_L = min(BL, L - block_L_id_start);
             // parallel load A from global memory to A panel
             current_block_A_base = d_A + block_L_id_start * lda + block_row_id_start;
-            current_block_A_L = min(BL, L - block_L_id_start);
             for (int t = tid * VEC_SIZE, s = 0; t < BM * BL; t += THREADS_PER_BLOCK * VEC_SIZE, s++)
             {
                 col_id = t / BM;
                 row_id = t - col_id * BM;
                 A_panel_reg[s] =
-                    (row_id < current_block_A_M && col_id < current_block_A_L)
+                    (row_id < current_block_M && col_id < current_block_L)
                         ? *reinterpret_cast<FVEC *>(current_block_A_base + col_id * lda + row_id)
                         : ZERO_VEC;
             }
             // parallel load B from global memory to B panel
             current_block_B_base = d_B + block_L_id_start * ldb + block_col_id_start;
-            current_block_B_L = current_block_A_L;
             for (int t = tid * VEC_SIZE, s = 0; t < BL * BN; t += THREADS_PER_BLOCK * VEC_SIZE, s++)
             {
                 row_id = t / BN;
                 col_id = t - row_id * BN;
                 B_panel_reg[s] =
-                    (row_id < current_block_B_L && col_id < current_block_B_N)
+                    (row_id < current_block_L && col_id < current_block_N)
                         ? *reinterpret_cast<FVEC *>(current_block_B_base + row_id * ldb + col_id)
                         : ZERO_VEC;
             }
@@ -107,25 +129,24 @@ __global__ void matmul_03_kernel(
             {
                 if (thread_L_id_start < BL)
                 {
-                    // load A from A panel to A register
-                    current_thread_A_base = &A_panel[panel_read_id][thread_L_id_start][thread_row_id_start];
-#pragma unroll RM / VEC_SIZE
-                    for (int i = 0; i < RM; i += VEC_SIZE)
+#pragma unroll NUM_AREA_Y
+                    for (int i = 0; i < NUM_AREA_Y; i++)
                     {
-                        *reinterpret_cast<FVEC *>(A_reg[reg_write_id] + i) =
-                            *reinterpret_cast<FVEC *>(current_thread_A_base + i);
+                        current_area_A_base = &A_panel[panel_read_id][thread_L_id_start][area_row_id_start[i]];
+                        current_thread_A_base = current_area_A_base + thread_row_id_start;
+                        *reinterpret_cast<FVEC *>(A_reg[reg_write_id] + i * VEC_SIZE) =
+                            *reinterpret_cast<FVEC *>(current_thread_A_base);
                     }
-                    // load B from B panel to B register
-                    current_thread_B_base = &B_panel[panel_read_id][thread_L_id_start][thread_col_id_start];
-#pragma unroll RN / VEC_SIZE
-                    for (int j = 0; j < RN; j += VEC_SIZE)
+#pragma unroll NUM_AREA_X
+                    for (int j = 0; j < NUM_AREA_X; j++)
                     {
-                        *reinterpret_cast<FVEC *>(B_reg[reg_write_id] + j) =
-                            *reinterpret_cast<FVEC *>(current_thread_B_base + j);
+                        current_area_B_base = &B_panel[panel_read_id][thread_L_id_start][area_col_id_start[j]];
+                        current_thread_B_base = current_area_B_base + thread_col_id_start;
+                        *reinterpret_cast<FVEC *>(B_reg[reg_write_id] + j * VEC_SIZE) =
+                            *reinterpret_cast<FVEC *>(current_thread_B_base);
                     }
                 }
 
-                // compute C
                 if (thread_L_id_start > 0)
                 {
 #pragma unroll RM
@@ -148,9 +169,9 @@ __global__ void matmul_03_kernel(
 
         if (block_L_id_start < L)
         {
+            current_block_L = min(BL, L - block_L_id_start);
             // parallel load A from global memory to A panel
             current_block_A_base = d_A + block_L_id_start * lda + block_row_id_start;
-            current_block_A_L = min(BL, L - block_L_id_start);
             for (int t = tid * VEC_SIZE, s = 0; t < BM * BL; t += THREADS_PER_BLOCK * VEC_SIZE, s++)
             {
                 col_id = t / BM;
@@ -159,28 +180,37 @@ __global__ void matmul_03_kernel(
             }
             // parallel load B from global memory to B panel
             current_block_B_base = d_B + block_L_id_start * ldb + block_col_id_start;
-            current_block_B_L = current_block_A_L;
             for (int t = tid * VEC_SIZE, s = 0; t < BL * BN; t += THREADS_PER_BLOCK * VEC_SIZE, s++)
             {
                 row_id = t / BN;
                 col_id = t - row_id * BN;
                 *reinterpret_cast<FVEC *>(&B_panel[panel_write_id][row_id][col_id]) = B_panel_reg[s];
             }
-        }
 
-        panel_write_id ^= 1;
-        panel_read_id ^= 1;
-        __syncthreads();
+            panel_write_id ^= 1;
+            panel_read_id ^= 1;
+            __syncthreads();
+        }
     }
 
     // store C
-    for (int i = 0; i < current_thread_C_M; i++)
+#pragma unroll NUM_AREA_Y
+    for (int i = 0; i < NUM_AREA_Y; i++)
     {
-        for (int j = 0; j < current_thread_C_N; j += VEC_SIZE)
+#pragma unroll NUM_AREA_X
+        for (int j = 0; j < NUM_AREA_X; j++)
         {
-            *reinterpret_cast<FVEC *>(&current_thread_C_base[i * ldc + j]) =
-                alpha * *reinterpret_cast<FVEC *>(&C_reg[i][j]) +
-                beta * *reinterpret_cast<FVEC *>(&current_thread_C_base[i * ldc + j]);
+            current_area_C_base = current_block_C_base + area_row_id_start[i] * ldc + area_col_id_start[j];
+            current_thread_C_base = current_area_C_base + thread_row_id_start * ldc + thread_col_id_start;
+            for (int idx = 0; idx < thread_C_M[i]; idx++)
+            {
+                for (int jdx = 0; jdx < thread_C_N[j]; jdx += VEC_SIZE)
+                {
+                    *reinterpret_cast<FVEC *>(&current_thread_C_base[idx * ldc + jdx]) =
+                        alpha * *reinterpret_cast<FVEC *>(&C_reg[i * VEC_SIZE + idx][j * VEC_SIZE + jdx]) +
+                        beta * *reinterpret_cast<FVEC *>(&current_thread_C_base[idx * ldc + jdx]);
+                }
+            }
         }
     }
 }

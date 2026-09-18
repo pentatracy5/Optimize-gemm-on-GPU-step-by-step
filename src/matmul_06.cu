@@ -19,9 +19,9 @@ __global__ void matmul_06_kernel(
     const int ldc,
     const float alpha,
     const float beta,
-    float *d_A,
-    float *d_B,
-    float *d_C)
+    float *__restrict__ d_A,
+    float *__restrict__ d_B,
+    float *__restrict__ d_C)
 {
     using FVEC = VecN<float, VEC_SIZE>;
     constexpr FVEC ZERO_VEC = {};
@@ -45,17 +45,18 @@ __global__ void matmul_06_kernel(
 
     const int block_row_id_start = blockIdx.y * BM;
     const int block_col_id_start = blockIdx.x * BN;
-
     const int current_block_M = min(BM, M - block_row_id_start);
     const int current_block_N = min(BN, N - block_col_id_start);
     int current_block_L;
 
     int area_row_id_start[NUM_AREA_Y];
     int area_col_id_start[NUM_AREA_X];
+
     const int thread_row_id_start = threadIdx.y * VEC_SIZE;
     const int thread_col_id_start = threadIdx.x * VEC_SIZE;
     int thread_C_M[NUM_AREA_Y];
     int thread_C_N[NUM_AREA_X];
+
 #pragma unroll NUM_AREA_Y
     for (int i = 0; i < NUM_AREA_Y; i++)
     {
@@ -77,6 +78,35 @@ __global__ void matmul_06_kernel(
     const int ldgsts_B_row_id = tid / LDGSTS_B_COL_STRIDE;
     const int ldgsts_B_col_id = tid - ldgsts_B_row_id * LDGSTS_B_COL_STRIDE;
 
+    int A_row_id[LDGSTS_A_ROW_TIMES];
+    int A_col_id[LDGSTS_A_COL_TIMES];
+    bool A_is_row_ok[LDGSTS_A_ROW_TIMES];
+    int B_row_id[LDGSTS_B_ROW_TIMES];
+    int B_col_id[LDGSTS_B_COL_TIMES];
+    bool B_is_col_ok[LDGSTS_B_COL_TIMES];
+#pragma unroll LDGSTS_A_COL_TIMES
+    for (int j = 0; j < LDGSTS_A_COL_TIMES; j++)
+    {
+        A_col_id[j] = ldgsts_A_col_id + j * LDGSTS_A_COL_STRIDE;
+    }
+#pragma unroll LDGSTS_A_ROW_TIMES
+    for (int i = 0; i < LDGSTS_A_ROW_TIMES; i++)
+    {
+        A_row_id[i] = (ldgsts_A_row_id + i * LDGSTS_A_ROW_STRIDE) * VEC_SIZE;
+        A_is_row_ok[i] = A_row_id[i] < current_block_M;
+    }
+#pragma unroll LDGSTS_B_ROW_TIMES
+    for (int i = 0; i < LDGSTS_B_ROW_TIMES; i++)
+    {
+        B_row_id[i] = ldgsts_B_row_id + i * LDGSTS_B_ROW_STRIDE;
+    }
+#pragma unroll LDGSTS_B_COL_TIMES
+    for (int j = 0; j < LDGSTS_B_COL_TIMES; j++)
+    {
+        B_col_id[j] = (ldgsts_B_col_id + j * LDGSTS_B_COL_STRIDE) * VEC_SIZE;
+        B_is_col_ok[j] = B_col_id[j] < current_block_N;
+    }
+
     float *current_block_A_base;
     float *current_block_B_base;
     float *current_block_C_base = d_C + block_row_id_start * ldc + block_col_id_start;
@@ -95,8 +125,6 @@ __global__ void matmul_06_kernel(
     FVEC A_panel_reg[LDGSTS_A_COL_TIMES][LDGSTS_A_ROW_TIMES];
     FVEC B_panel_reg[LDGSTS_B_ROW_TIMES][LDGSTS_B_COL_TIMES];
 
-    int row_id;
-    int col_id;
     int panel_write_id = 0;
     int panel_read_id = 1;
     int reg_write_id;
@@ -111,14 +139,13 @@ __global__ void matmul_06_kernel(
 #pragma unroll LDGSTS_A_COL_TIMES
             for (int j = 0; j < LDGSTS_A_COL_TIMES; j++)
             {
-                col_id = ldgsts_A_col_id + j * LDGSTS_A_COL_STRIDE;
+                bool is_col_ok = A_col_id[j] < current_block_L;
 #pragma unroll LDGSTS_A_ROW_TIMES
                 for (int i = 0; i < LDGSTS_A_ROW_TIMES; i++)
                 {
-                    row_id = (ldgsts_A_row_id + i * LDGSTS_A_ROW_STRIDE) * VEC_SIZE;
                     A_panel_reg[j][i] =
-                        (row_id < current_block_M && col_id < current_block_L)
-                            ? *reinterpret_cast<FVEC *>(current_block_A_base + col_id * lda + row_id)
+                        (A_is_row_ok[i] && is_col_ok)
+                            ? *reinterpret_cast<FVEC *>(current_block_A_base + A_col_id[j] * lda + A_row_id[i])
                             : ZERO_VEC;
                 }
             }
@@ -127,14 +154,13 @@ __global__ void matmul_06_kernel(
 #pragma unroll LDGSTS_B_ROW_TIMES
             for (int i = 0; i < LDGSTS_B_ROW_TIMES; i++)
             {
-                row_id = ldgsts_B_row_id + i * LDGSTS_B_ROW_STRIDE;
+                bool is_row_ok = B_row_id[i] < current_block_L;
 #pragma unroll LDGSTS_B_COL_TIMES
                 for (int j = 0; j < LDGSTS_B_COL_TIMES; j++)
                 {
-                    col_id = (ldgsts_B_col_id + j * LDGSTS_B_COL_STRIDE) * VEC_SIZE;
                     B_panel_reg[i][j] =
-                        (row_id < current_block_L && col_id < current_block_N)
-                            ? *reinterpret_cast<FVEC *>(current_block_B_base + row_id * ldb + col_id)
+                        (is_row_ok && B_is_col_ok[j])
+                            ? *reinterpret_cast<FVEC *>(current_block_B_base + B_row_id[i] * ldb + B_col_id[j])
                             : ZERO_VEC;
                 }
             }
@@ -167,7 +193,6 @@ __global__ void matmul_06_kernel(
                         *reinterpret_cast<FVEC *>(B_reg[reg_write_id] + j * VEC_SIZE) =
                             *reinterpret_cast<FVEC *>(current_thread_B_base);
                     }
-                    
                 }
 
                 if (thread_L_id_start > 0)
@@ -193,35 +218,31 @@ __global__ void matmul_06_kernel(
 #pragma unroll LDGSTS_A_COL_TIMES
             for (int j = 0; j < LDGSTS_A_COL_TIMES; j++)
             {
-                col_id = ldgsts_A_col_id + j * LDGSTS_A_COL_STRIDE;
-                if (col_id >= BL)
+                if (A_col_id[j] >= BL)
                     break;
 #pragma unroll LDGSTS_A_ROW_TIMES
                 for (int i = 0; i < LDGSTS_A_ROW_TIMES; i++)
                 {
-                    row_id = (ldgsts_A_row_id + i * LDGSTS_A_ROW_STRIDE) * VEC_SIZE;
-                    *reinterpret_cast<FVEC *>(&A_panel[panel_write_id][col_id][row_id]) = A_panel_reg[j][i];
+                    *reinterpret_cast<FVEC *>(&A_panel[panel_write_id][A_col_id[j]][A_row_id[i]]) = A_panel_reg[j][i];
                 }
             }
             // parallel load B from global memory to B panel
 #pragma unroll LDGSTS_B_ROW_TIMES
             for (int i = 0; i < LDGSTS_B_ROW_TIMES; i++)
             {
-                row_id = ldgsts_B_row_id + i * LDGSTS_B_ROW_STRIDE;
-                if (row_id >= BL)
+                if (B_row_id[i] >= BL)
                     break;
 #pragma unroll LDGSTS_B_COL_TIMES
                 for (int j = 0; j < LDGSTS_B_COL_TIMES; j++)
                 {
-                    col_id = (ldgsts_B_col_id + j * LDGSTS_B_COL_STRIDE) * VEC_SIZE;
-                    *reinterpret_cast<FVEC *>(&B_panel[panel_write_id][row_id][col_id]) = B_panel_reg[i][j];
+                    *reinterpret_cast<FVEC *>(&B_panel[panel_write_id][B_row_id[i]][B_col_id[j]]) = B_panel_reg[i][j];
                 }
             }
-        }
 
-        panel_write_id ^= 1;
-        panel_read_id ^= 1;
-        __syncthreads();
+            panel_write_id ^= 1;
+            panel_read_id ^= 1;
+            __syncthreads();
+        }
     }
 
     // store C
@@ -238,9 +259,10 @@ __global__ void matmul_06_kernel(
             {
                 if (idx >= thread_C_M[i] || 0 >= thread_C_N[j])
                     break;
+                FVEC temp = *reinterpret_cast<FVEC *>(&current_thread_C_base[idx * ldc]);
                 *reinterpret_cast<FVEC *>(&current_thread_C_base[idx * ldc]) =
                     alpha * *reinterpret_cast<FVEC *>(&C_reg[i * VEC_SIZE + idx][j * VEC_SIZE]) +
-                    beta * *reinterpret_cast<FVEC *>(&current_thread_C_base[idx * ldc]);
+                    beta * temp;
             }
         }
     }
