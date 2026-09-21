@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <Timer.h>
@@ -5,6 +6,7 @@
 #include <matmul.h>
 #include <config.h>
 
+using std::swap;
 using std::cerr;
 using std::cout;
 using std::endl;
@@ -12,6 +14,13 @@ using std::istringstream;
 
 bool test(int M, int N, int L, unsigned int version)
 {
+	struct DataNeedSwap
+	{
+		MatMulFunc func;
+		float *d_out;
+		double *elapsed;
+	};
+
 	Timer timer;
 
 	MatMulFunc f{matmul_funcs[version]};
@@ -27,31 +36,36 @@ bool test(int M, int N, int L, unsigned int version)
 
 	init_ABCREF(M, N, L, lda, ldb, ldc, d_A, d_B, d_C, d_REF);
 
+	double elapsed_ref = 0.0;
+	double elapsed_f = 0.0;
+
+	DataNeedSwap first{ref, d_REF, &elapsed_ref};
+	DataNeedSwap second{f, d_C, &elapsed_f};
+
 	for (int i = 0; i < warmup; ++i)
 	{
-		ref(M, N, L, lda, ldb, ldc, d_A, d_B, d_REF);
-		f(M, N, L, lda, ldb, ldc, d_A, d_B, d_C);
+		first.func(M, N, L, lda, ldb, ldc, d_A, d_B, first.d_out);
+		second.func(M, N, L, lda, ldb, ldc, d_A, d_B, second.d_out);
+
+		swap(first, second);
 	}
 
-	double elapsed = 0.0;
 	for (int i = 0; i < nrepeats; i++)
 	{
 		clear_cache();
 		timer.tic_gpu();
-		ref(M, N, L, lda, ldb, ldc, d_A, d_B, d_REF);
-		elapsed += timer.toc_gpu();
-	}
-	double time_ref = elapsed / nrepeats / 1000.0;
+		first.func(M, N, L, lda, ldb, ldc, d_A, d_B, first.d_out);
+		*first.elapsed += timer.toc_gpu();
 
-	elapsed = 0.0;
-	for (int i = 0; i < nrepeats; i++)
-	{
 		clear_cache();
 		timer.tic_gpu();
-		f(M, N, L, lda, ldb, ldc, d_A, d_B, d_C);
-		elapsed += timer.toc_gpu();
+		second.func(M, N, L, lda, ldb, ldc, d_A, d_B, second.d_out);
+		*second.elapsed += timer.toc_gpu();
+
+		swap(first, second);
 	}
-	double time_f = elapsed / nrepeats / 1000.0;
+	double time_ref = elapsed_ref / nrepeats / 1000.0;
+	double time_f = elapsed_f / nrepeats / 1000.0;
 
 	double flops = 2 * M / 1000.0 * N / 1000.0 * L / 1000.0;
 	cout << "M\tN\tL\tref_GFLOPS\tf_GFLOPS" << endl;

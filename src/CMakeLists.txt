@@ -11,6 +11,9 @@ add_library(matmul_lib STATIC
     matmul_05.cu
     matmul_06.cu
     matmul_07.cu
+    matmul_08.cu
+    matmul_09.cu
+    matmul_10.cu
     utils.cu
 )
 
