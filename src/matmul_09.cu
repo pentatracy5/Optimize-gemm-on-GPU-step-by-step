@@ -25,7 +25,6 @@ __global__ void matmul_09_kernel(
     float *__restrict__ d_C)
 {
     using FVEC = VecN<float, VEC_SIZE>;
-    constexpr FVEC ZERO_VEC = {};
 
     constexpr int THREADS_PER_BLOCK_X = BN / RN;
     constexpr int THREADS_PER_BLOCK_Y = BM / RM;
@@ -34,7 +33,6 @@ __global__ void matmul_09_kernel(
     constexpr int NUM_AREA_Y = RM / VEC_SIZE;
     constexpr int AREA_X_SIZE = THREADS_PER_BLOCK_X * VEC_SIZE;
     constexpr int AREA_Y_SIZE = THREADS_PER_BLOCK_Y * VEC_SIZE;
-
     constexpr int LDGSTS_A_ROW_STRIDE = (BM / VEC_SIZE < THREADS_PER_BLOCK) ? BM / VEC_SIZE : THREADS_PER_BLOCK;
     constexpr int LDGSTS_A_COL_STRIDE = THREADS_PER_BLOCK / LDGSTS_A_ROW_STRIDE;
     constexpr int LDGSTS_B_COL_STRIDE = (BN / VEC_SIZE < THREADS_PER_BLOCK) ? BN / VEC_SIZE : THREADS_PER_BLOCK;
@@ -46,32 +44,22 @@ __global__ void matmul_09_kernel(
 
     const int block_row_id_start = blockIdx.y * BM;
     const int block_col_id_start = blockIdx.x * BN;
-    const int current_block_M = min(BM, M - block_row_id_start);
-    const int current_block_N = min(BN, N - block_col_id_start);
-    int current_block_L;
 
     int area_row_id_start[NUM_AREA_Y];
     int area_col_id_start[NUM_AREA_X];
-
-    const int thread_row_id_start = threadIdx.y * VEC_SIZE;
-    const int thread_col_id_start = threadIdx.x * VEC_SIZE;
-    int thread_C_M[NUM_AREA_Y];
-    int thread_C_N[NUM_AREA_X];
-
 #pragma unroll NUM_AREA_Y
     for (int i = 0; i < NUM_AREA_Y; i++)
     {
         area_row_id_start[i] = AREA_Y_SIZE * i;
-        int area_M = min(AREA_Y_SIZE, current_block_M - area_row_id_start[i]);
-        thread_C_M[i] = min(VEC_SIZE, area_M - thread_row_id_start);
     }
 #pragma unroll NUM_AREA_X
     for (int j = 0; j < NUM_AREA_X; j++)
     {
         area_col_id_start[j] = AREA_X_SIZE * j;
-        int area_N = min(AREA_X_SIZE, current_block_N - area_col_id_start[j]);
-        thread_C_N[j] = min(VEC_SIZE, area_N - thread_col_id_start);
     }
+
+    const int thread_row_id_start = threadIdx.y * VEC_SIZE;
+    const int thread_col_id_start = threadIdx.x * VEC_SIZE;
 
     const int tid = threadIdx.y * blockDim.x + threadIdx.x;
     const int ldgsts_A_col_id = tid / LDGSTS_A_ROW_STRIDE;
@@ -81,10 +69,8 @@ __global__ void matmul_09_kernel(
 
     int A_row_id[LDGSTS_A_ROW_TIMES];
     int A_col_id[LDGSTS_A_COL_TIMES];
-    bool A_is_row_ok[LDGSTS_A_ROW_TIMES];
     int B_row_id[LDGSTS_B_ROW_TIMES];
     int B_col_id[LDGSTS_B_COL_TIMES];
-    bool B_is_col_ok[LDGSTS_B_COL_TIMES];
 #pragma unroll LDGSTS_A_COL_TIMES
     for (int j = 0; j < LDGSTS_A_COL_TIMES; j++)
     {
@@ -94,7 +80,6 @@ __global__ void matmul_09_kernel(
     for (int i = 0; i < LDGSTS_A_ROW_TIMES; i++)
     {
         A_row_id[i] = (ldgsts_A_row_id + i * LDGSTS_A_ROW_STRIDE) * VEC_SIZE;
-        A_is_row_ok[i] = A_row_id[i] < current_block_M;
     }
 #pragma unroll LDGSTS_B_ROW_TIMES
     for (int i = 0; i < LDGSTS_B_ROW_TIMES; i++)
@@ -105,7 +90,6 @@ __global__ void matmul_09_kernel(
     for (int j = 0; j < LDGSTS_B_COL_TIMES; j++)
     {
         B_col_id[j] = (ldgsts_B_col_id + j * LDGSTS_B_COL_STRIDE) * VEC_SIZE;
-        B_is_col_ok[j] = B_col_id[j] < current_block_N;
     }
 
     float *current_block_A_base = d_A + block_row_id_start;
@@ -132,49 +116,26 @@ __global__ void matmul_09_kernel(
     int block_L_id_start = 0;
     if constexpr (true)
     {
-        current_block_L = min(BL, L - block_L_id_start);
-        // parallel load A from global memory to A panel
 #pragma unroll LDGSTS_A_COL_TIMES
         for (int j = 0; j < LDGSTS_A_COL_TIMES; j++)
         {
-            if (A_col_id[j] >= BL)
-                break;
-            bool is_col_ok = A_col_id[j] < current_block_L;
 #pragma unroll LDGSTS_A_ROW_TIMES
             for (int i = 0; i < LDGSTS_A_ROW_TIMES; i++)
             {
-                if (A_is_row_ok[i] && is_col_ok)
-                {
-                    __pipeline_memcpy_async(&A_panel[panel_write_id][A_col_id[j]][A_row_id[i]],
-                                            current_block_A_base + A_col_id[j] * lda + A_row_id[i],
-                                            sizeof(FVEC));
-                }
-                else
-                {
-                    *reinterpret_cast<FVEC *>(&A_panel[panel_write_id][A_col_id[j]][A_row_id[i]]) = ZERO_VEC;
-                }
+                __pipeline_memcpy_async(&A_panel[panel_write_id][A_col_id[j]][A_row_id[i]],
+                                        current_block_A_base + A_col_id[j] * lda + A_row_id[i],
+                                        sizeof(FVEC));
             }
         }
-        // parallel load B from global memory to B panel
 #pragma unroll LDGSTS_B_ROW_TIMES
         for (int i = 0; i < LDGSTS_B_ROW_TIMES; i++)
         {
-            if (B_row_id[i] >= BL)
-                break;
-            bool is_row_ok = B_row_id[i] < current_block_L;
 #pragma unroll LDGSTS_B_COL_TIMES
             for (int j = 0; j < LDGSTS_B_COL_TIMES; j++)
             {
-                if (is_row_ok && B_is_col_ok[j])
-                {
-                    __pipeline_memcpy_async(&B_panel[panel_write_id][B_row_id[i]][B_col_id[j]],
-                                            current_block_B_base + B_row_id[i] * ldb + B_col_id[j],
-                                            sizeof(FVEC));
-                }
-                else
-                {
-                    *reinterpret_cast<FVEC *>(&B_panel[panel_write_id][B_row_id[i]][B_col_id[j]]) = ZERO_VEC;
-                }
+                __pipeline_memcpy_async(&B_panel[panel_write_id][B_row_id[i]][B_col_id[j]],
+                                        current_block_B_base + B_row_id[i] * ldb + B_col_id[j],
+                                        sizeof(FVEC));
             }
         }
         __pipeline_commit();
@@ -206,51 +167,28 @@ __global__ void matmul_09_kernel(
     {
         if constexpr (true)
         {
-            current_block_L = min(BL, L - block_L_id_start);
-            // parallel load A from global memory to A panel
             current_block_A_base += BL * lda;
 #pragma unroll LDGSTS_A_COL_TIMES
             for (int j = 0; j < LDGSTS_A_COL_TIMES; j++)
             {
-                if (A_col_id[j] >= BL)
-                    break;
-                bool is_col_ok = A_col_id[j] < current_block_L;
 #pragma unroll LDGSTS_A_ROW_TIMES
                 for (int i = 0; i < LDGSTS_A_ROW_TIMES; i++)
                 {
-                    if (A_is_row_ok[i] && is_col_ok)
-                    {
-                        __pipeline_memcpy_async(&A_panel[panel_write_id][A_col_id[j]][A_row_id[i]],
-                                                current_block_A_base + A_col_id[j] * lda + A_row_id[i],
-                                                sizeof(FVEC));
-                    }
-                    else
-                    {
-                        *reinterpret_cast<FVEC *>(&A_panel[panel_write_id][A_col_id[j]][A_row_id[i]]) = ZERO_VEC;
-                    }
+                    __pipeline_memcpy_async(&A_panel[panel_write_id][A_col_id[j]][A_row_id[i]],
+                                            current_block_A_base + A_col_id[j] * lda + A_row_id[i],
+                                            sizeof(FVEC));
                 }
             }
-            // parallel load B from global memory to B panel
             current_block_B_base += BL * ldb;
 #pragma unroll LDGSTS_B_ROW_TIMES
             for (int i = 0; i < LDGSTS_B_ROW_TIMES; i++)
             {
-                if (B_row_id[i] >= BL)
-                    break;
-                bool is_row_ok = B_row_id[i] < current_block_L;
 #pragma unroll LDGSTS_B_COL_TIMES
                 for (int j = 0; j < LDGSTS_B_COL_TIMES; j++)
                 {
-                    if (is_row_ok && B_is_col_ok[j])
-                    {
-                        __pipeline_memcpy_async(&B_panel[panel_write_id][B_row_id[i]][B_col_id[j]],
-                                                current_block_B_base + B_row_id[i] * ldb + B_col_id[j],
-                                                sizeof(FVEC));
-                    }
-                    else
-                    {
-                        *reinterpret_cast<FVEC *>(&B_panel[panel_write_id][B_row_id[i]][B_col_id[j]]) = ZERO_VEC;
-                    }
+                    __pipeline_memcpy_async(&B_panel[panel_write_id][B_row_id[i]][B_col_id[j]],
+                                            current_block_B_base + B_row_id[i] * ldb + B_col_id[j],
+                                            sizeof(FVEC));
                 }
             }
             __pipeline_commit();
@@ -258,12 +196,11 @@ __global__ void matmul_09_kernel(
 
         if constexpr (true)
         {
+            reg_write_id = 1;
+            reg_read_id = 0;
 #pragma unroll BL - 1
             for (int thread_L_id_start = 1; thread_L_id_start < BL; thread_L_id_start++)
             {
-                reg_write_id = thread_L_id_start % 2;
-                reg_read_id = reg_write_id ^ 1;
-
 #pragma unroll NUM_AREA_Y
                 for (int i = 0; i < NUM_AREA_Y; i++)
                 {
@@ -292,6 +229,9 @@ __global__ void matmul_09_kernel(
                             *reinterpret_cast<FVEC *>(B_reg[reg_read_id] + j);
                     }
                 }
+
+                reg_write_id ^= 1;
+                reg_read_id ^= 1;
             }
         }
 
@@ -338,12 +278,11 @@ __global__ void matmul_09_kernel(
 
     if constexpr (true)
     {
+        reg_write_id = 1;
+        reg_read_id = 0;
 #pragma unroll BL - 1
         for (int thread_L_id_start = 1; thread_L_id_start < BL; thread_L_id_start++)
         {
-            reg_write_id = thread_L_id_start % 2;
-            reg_read_id = reg_write_id ^ 1;
-
 #pragma unroll NUM_AREA_Y
             for (int i = 0; i < NUM_AREA_Y; i++)
             {
@@ -372,6 +311,9 @@ __global__ void matmul_09_kernel(
                         *reinterpret_cast<FVEC *>(B_reg[reg_read_id] + j);
                 }
             }
+
+            reg_write_id ^= 1;
+            reg_read_id ^= 1;
         }
 
 #pragma unroll RM
@@ -387,7 +329,6 @@ __global__ void matmul_09_kernel(
         }
     }
 
-    // store C
 #pragma unroll NUM_AREA_Y
     for (int i = 0; i < NUM_AREA_Y; i++)
     {
@@ -399,8 +340,6 @@ __global__ void matmul_09_kernel(
 #pragma unroll VEC_SIZE
             for (int idx = 0; idx < VEC_SIZE; idx++)
             {
-                if (idx >= thread_C_M[i] || 0 >= thread_C_N[j])
-                    break;
                 FVEC temp = *reinterpret_cast<FVEC *>(&current_thread_C_base[idx * ldc]);
                 *reinterpret_cast<FVEC *>(&current_thread_C_base[idx * ldc]) =
                     alpha * *reinterpret_cast<FVEC *>(&C_reg[i * VEC_SIZE + idx][j * VEC_SIZE]) +
@@ -421,6 +360,9 @@ void matmul_09(
     float *d_B,
     float *d_C)
 {
+    if (M % BM != 0 || N % BN != 0 || L % BL != 0)
+        return;
+
     auto kernel = matmul_09_kernel<BM, BN, BL, RM, RN, VEC_SIZE>;
     const dim3 total_threads{static_cast<unsigned int>((N + RN - 1) / RN), static_cast<unsigned int>((M + RM - 1) / RM)};
     const dim3 threads_per_block{static_cast<unsigned int>(BN / RN), static_cast<unsigned int>(BM / RM)};
