@@ -47,12 +47,12 @@ __global__ void matmul_09_kernel(
 
     int area_row_id_start[NUM_AREA_Y];
     int area_col_id_start[NUM_AREA_X];
-#pragma unroll NUM_AREA_Y
+#pragma unroll
     for (int i = 0; i < NUM_AREA_Y; i++)
     {
         area_row_id_start[i] = AREA_Y_SIZE * i;
     }
-#pragma unroll NUM_AREA_X
+#pragma unroll
     for (int j = 0; j < NUM_AREA_X; j++)
     {
         area_col_id_start[j] = AREA_X_SIZE * j;
@@ -71,22 +71,22 @@ __global__ void matmul_09_kernel(
     int A_col_id[LDGSTS_A_COL_TIMES];
     int B_row_id[LDGSTS_B_ROW_TIMES];
     int B_col_id[LDGSTS_B_COL_TIMES];
-#pragma unroll LDGSTS_A_COL_TIMES
+#pragma unroll
     for (int j = 0; j < LDGSTS_A_COL_TIMES; j++)
     {
         A_col_id[j] = ldgsts_A_col_id + j * LDGSTS_A_COL_STRIDE;
     }
-#pragma unroll LDGSTS_A_ROW_TIMES
+#pragma unroll
     for (int i = 0; i < LDGSTS_A_ROW_TIMES; i++)
     {
         A_row_id[i] = (ldgsts_A_row_id + i * LDGSTS_A_ROW_STRIDE) * VEC_SIZE;
     }
-#pragma unroll LDGSTS_B_ROW_TIMES
+#pragma unroll
     for (int i = 0; i < LDGSTS_B_ROW_TIMES; i++)
     {
         B_row_id[i] = ldgsts_B_row_id + i * LDGSTS_B_ROW_STRIDE;
     }
-#pragma unroll LDGSTS_B_COL_TIMES
+#pragma unroll
     for (int j = 0; j < LDGSTS_B_COL_TIMES; j++)
     {
         B_col_id[j] = (ldgsts_B_col_id + j * LDGSTS_B_COL_STRIDE) * VEC_SIZE;
@@ -116,10 +116,10 @@ __global__ void matmul_09_kernel(
     int block_L_id_start = 0;
     if constexpr (true)
     {
-#pragma unroll LDGSTS_A_COL_TIMES
+#pragma unroll
         for (int j = 0; j < LDGSTS_A_COL_TIMES; j++)
         {
-#pragma unroll LDGSTS_A_ROW_TIMES
+#pragma unroll
             for (int i = 0; i < LDGSTS_A_ROW_TIMES; i++)
             {
                 __pipeline_memcpy_async(&A_panel[panel_write_id][A_col_id[j]][A_row_id[i]],
@@ -127,10 +127,10 @@ __global__ void matmul_09_kernel(
                                         sizeof(FVEC));
             }
         }
-#pragma unroll LDGSTS_B_ROW_TIMES
+#pragma unroll
         for (int i = 0; i < LDGSTS_B_ROW_TIMES; i++)
         {
-#pragma unroll LDGSTS_B_COL_TIMES
+#pragma unroll
             for (int j = 0; j < LDGSTS_B_COL_TIMES; j++)
             {
                 __pipeline_memcpy_async(&B_panel[panel_write_id][B_row_id[i]][B_col_id[j]],
@@ -145,7 +145,7 @@ __global__ void matmul_09_kernel(
         __pipeline_wait_prior(0);
         __syncthreads();
 
-#pragma unroll NUM_AREA_Y
+#pragma unroll
         for (int i = 0; i < NUM_AREA_Y; i++)
         {
             current_area_A_base = &A_panel[panel_read_id][0][area_row_id_start[i]];
@@ -153,7 +153,7 @@ __global__ void matmul_09_kernel(
             *reinterpret_cast<FVEC *>(A_reg[0] + i * VEC_SIZE) =
                 *reinterpret_cast<FVEC *>(current_thread_A_base);
         }
-#pragma unroll NUM_AREA_X
+#pragma unroll
         for (int j = 0; j < NUM_AREA_X; j++)
         {
             current_area_B_base = &B_panel[panel_read_id][0][area_col_id_start[j]];
@@ -168,10 +168,10 @@ __global__ void matmul_09_kernel(
         if constexpr (true)
         {
             current_block_A_base += BL * lda;
-#pragma unroll LDGSTS_A_COL_TIMES
+#pragma unroll
             for (int j = 0; j < LDGSTS_A_COL_TIMES; j++)
             {
-#pragma unroll LDGSTS_A_ROW_TIMES
+#pragma unroll
                 for (int i = 0; i < LDGSTS_A_ROW_TIMES; i++)
                 {
                     __pipeline_memcpy_async(&A_panel[panel_write_id][A_col_id[j]][A_row_id[i]],
@@ -180,10 +180,10 @@ __global__ void matmul_09_kernel(
                 }
             }
             current_block_B_base += BL * ldb;
-#pragma unroll LDGSTS_B_ROW_TIMES
+#pragma unroll
             for (int i = 0; i < LDGSTS_B_ROW_TIMES; i++)
             {
-#pragma unroll LDGSTS_B_COL_TIMES
+#pragma unroll
                 for (int j = 0; j < LDGSTS_B_COL_TIMES; j++)
                 {
                     __pipeline_memcpy_async(&B_panel[panel_write_id][B_row_id[i]][B_col_id[j]],
@@ -198,10 +198,10 @@ __global__ void matmul_09_kernel(
         {
             reg_write_id = 1;
             reg_read_id = 0;
-#pragma unroll BL - 1
+#pragma unroll
             for (int thread_L_id_start = 1; thread_L_id_start < BL; thread_L_id_start++)
             {
-#pragma unroll NUM_AREA_Y
+#pragma unroll
                 for (int i = 0; i < NUM_AREA_Y; i++)
                 {
                     current_area_A_base = &A_panel[panel_read_id][thread_L_id_start][area_row_id_start[i]];
@@ -209,7 +209,7 @@ __global__ void matmul_09_kernel(
                     *reinterpret_cast<FVEC *>(A_reg[reg_write_id] + i * VEC_SIZE) =
                         *reinterpret_cast<FVEC *>(current_thread_A_base);
                 }
-#pragma unroll NUM_AREA_X
+#pragma unroll
                 for (int j = 0; j < NUM_AREA_X; j++)
                 {
                     current_area_B_base = &B_panel[panel_read_id][thread_L_id_start][area_col_id_start[j]];
@@ -218,10 +218,10 @@ __global__ void matmul_09_kernel(
                         *reinterpret_cast<FVEC *>(current_thread_B_base);
                 }
 
-#pragma unroll RM
+#pragma unroll
                 for (int i = 0; i < RM; i++)
                 {
-#pragma unroll RN / VEC_SIZE
+#pragma unroll
                     for (int j = 0; j < RN; j += VEC_SIZE)
                     {
                         *reinterpret_cast<FVEC *>(&C_reg[i][j]) +=
@@ -242,7 +242,7 @@ __global__ void matmul_09_kernel(
             __pipeline_wait_prior(0);
             __syncthreads();
 
-#pragma unroll NUM_AREA_Y
+#pragma unroll
             for (int i = 0; i < NUM_AREA_Y; i++)
             {
                 current_area_A_base = &A_panel[panel_read_id][0][area_row_id_start[i]];
@@ -250,7 +250,7 @@ __global__ void matmul_09_kernel(
                 *reinterpret_cast<FVEC *>(A_reg[0] + i * VEC_SIZE) =
                     *reinterpret_cast<FVEC *>(current_thread_A_base);
             }
-#pragma unroll NUM_AREA_X
+#pragma unroll
             for (int j = 0; j < NUM_AREA_X; j++)
             {
                 current_area_B_base = &B_panel[panel_read_id][0][area_col_id_start[j]];
@@ -262,10 +262,10 @@ __global__ void matmul_09_kernel(
 
         if constexpr (true)
         {
-#pragma unroll RM
+#pragma unroll
             for (int i = 0; i < RM; i++)
             {
-#pragma unroll RN / VEC_SIZE
+#pragma unroll
                 for (int j = 0; j < RN; j += VEC_SIZE)
                 {
                     *reinterpret_cast<FVEC *>(&C_reg[i][j]) +=
@@ -280,10 +280,10 @@ __global__ void matmul_09_kernel(
     {
         reg_write_id = 1;
         reg_read_id = 0;
-#pragma unroll BL - 1
+#pragma unroll
         for (int thread_L_id_start = 1; thread_L_id_start < BL; thread_L_id_start++)
         {
-#pragma unroll NUM_AREA_Y
+#pragma unroll
             for (int i = 0; i < NUM_AREA_Y; i++)
             {
                 current_area_A_base = &A_panel[panel_read_id][thread_L_id_start][area_row_id_start[i]];
@@ -291,7 +291,7 @@ __global__ void matmul_09_kernel(
                 *reinterpret_cast<FVEC *>(A_reg[reg_write_id] + i * VEC_SIZE) =
                     *reinterpret_cast<FVEC *>(current_thread_A_base);
             }
-#pragma unroll NUM_AREA_X
+#pragma unroll
             for (int j = 0; j < NUM_AREA_X; j++)
             {
                 current_area_B_base = &B_panel[panel_read_id][thread_L_id_start][area_col_id_start[j]];
@@ -300,10 +300,10 @@ __global__ void matmul_09_kernel(
                     *reinterpret_cast<FVEC *>(current_thread_B_base);
             }
 
-#pragma unroll RM
+#pragma unroll
             for (int i = 0; i < RM; i++)
             {
-#pragma unroll RN / VEC_SIZE
+#pragma unroll
                 for (int j = 0; j < RN; j += VEC_SIZE)
                 {
                     *reinterpret_cast<FVEC *>(&C_reg[i][j]) +=
@@ -316,10 +316,10 @@ __global__ void matmul_09_kernel(
             reg_read_id ^= 1;
         }
 
-#pragma unroll RM
+#pragma unroll
         for (int i = 0; i < RM; i++)
         {
-#pragma unroll RN / VEC_SIZE
+#pragma unroll
             for (int j = 0; j < RN; j += VEC_SIZE)
             {
                 *reinterpret_cast<FVEC *>(&C_reg[i][j]) +=
@@ -329,15 +329,15 @@ __global__ void matmul_09_kernel(
         }
     }
 
-#pragma unroll NUM_AREA_Y
+#pragma unroll
     for (int i = 0; i < NUM_AREA_Y; i++)
     {
-#pragma unroll NUM_AREA_X
+#pragma unroll
         for (int j = 0; j < NUM_AREA_X; j++)
         {
             current_area_C_base = current_block_C_base + area_row_id_start[i] * ldc + area_col_id_start[j];
             current_thread_C_base = current_area_C_base + thread_row_id_start * ldc + thread_col_id_start;
-#pragma unroll VEC_SIZE
+#pragma unroll
             for (int idx = 0; idx < VEC_SIZE; idx++)
             {
                 FVEC temp = *reinterpret_cast<FVEC *>(&current_thread_C_base[idx * ldc]);
